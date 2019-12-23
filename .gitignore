@@ -1,0 +1,7 @@
+.vscode
+data/hanazono/*
+data/img/*
+logs/*
+result.png
+!.keep
+__pycache__
