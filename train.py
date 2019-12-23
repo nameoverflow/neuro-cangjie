@@ -40,8 +40,8 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--loader_workers', type=int, default=64)
-    parser.add_argument('--epochs', type=int, default=120)
-    parser.add_argument('--batch_size', type=int, default=256)
+    parser.add_argument('--epochs', type=int, default=1200)
+    parser.add_argument('--batch_size', type=int, default=512)
     parser.add_argument('--save_interval', type=int, default=10)
     parser.add_argument('--save_dir', type=str, default='logs/')
     parser.add_argument('--resume', type=str, default=None)

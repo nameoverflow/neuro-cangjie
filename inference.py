@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-import skimage.transform
 import dataset
 
 from torch.nn.utils.rnn import pack_padded_sequence
