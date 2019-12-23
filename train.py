@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import torchvision.transforms as T
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.utils.tensorboard import SummaryWriter
 from PIL import Image
@@ -47,8 +48,8 @@ def main():
     parser.add_argument('--table', type=str, default='data/Cangjie5.txt')
     parser.add_argument('--codemap', type=str, default='data/codemap_cangjie5.txt')
     parser.add_argument('--fonts', nargs='+', default=['data/hanazono/HanaMinA.ttf', 'data/hanazono/HanaMinB.ttf'])
-    parser.add_argument('--encoder_lr', type=float, default=1e-2)
-    parser.add_argument('--decoder_lr', type=float, default=1e-2)
+    parser.add_argument('--encoder_lr', type=float, default=1e-3)
+    parser.add_argument('--decoder_lr', type=float, default=1e-3)
     parser.add_argument('--alpha_c', type=float, default=1.)
     parser.add_argument('--grad_clip', type=float, default=5.)
     args = parser.parse_args()
@@ -70,7 +71,7 @@ def main():
 
     encoder = models.Encoder(encode_channels=256).to(device)
     encoder_optim = torch.optim.Adam(encoder.parameters(), lr=args.encoder_lr)
-    decoder = models.Decoder(128, 256, 256, 26 + 2, dataset.char_num, encoder_dim=256, dropout=0.5).to(device)
+    decoder = models.Decoder(128, 256, 256, 26 + 2, encoder_dim=256, dropout=0.5).to(device)
     decoder_optim = torch.optim.Adam(decoder.parameters(), lr=args.decoder_lr)
     epoch_start = 0
     if args.resume != None:
@@ -108,12 +109,12 @@ def main():
                        writer=writer,
                        args=args)
         
-        is_best = epoch > 0 and best_acc < acc
+        is_best = best_acc < acc # and epoch > 0
         best_acc = max(acc, best_acc)
         
         if epoch % args.save_interval == args.save_interval - 1 or is_best:
             save_checkpoint(epoch, encoder, decoder, encoder_optim, decoder_optim, acc, is_best, args.save_dir)
-            vis = visualize_att(Image.fromarray(imgs[0, 0].cpu().numpy(), mode='L'), scores[0].topk(1, dim=-1).indices.flatten().tolist(), alphas[0].cpu(), logger.map_rev)
+            vis = visualize_att(T.ToPILImage()(imgs[0].cpu()), scores[0].topk(1, dim=-1).indices.flatten().tolist(), alphas[0].view(-1, 13, 13).cpu(), logger.map_rev)
             vis.savefig(os.path.join(args.save_dir, 'val_visualize_%d.png'%epoch))
 
 
@@ -137,8 +138,8 @@ def train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_
         chidx = chidx.to(device)
 
         # Forward prop.
-        imgs = encoder(imgs)
-        scores, caps_sorted, decode_lengths, alphas, sort_ind = decoder(imgs, caps, caplens)
+        feature = encoder(imgs)
+        scores, caps_sorted, decode_lengths, alphas, sort_ind = decoder(feature, caps, caplens)
 
         # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
         targets = caps_sorted[:, 1:]
@@ -204,13 +205,9 @@ def validate(val_loader, encoder, decoder, criterion, epoch, logger, writer, arg
     top5 = AverageMeter()
     aux_top1 = AverageMeter()
 
-    # explicitly disable gradient calculation to avoid CUDA memory error
-    # solves the issue #57
     with torch.no_grad():
-        # Batches
         progress = tqdm(enumerate(val_loader), total=len(val_loader), leave=False)
         for i, (imgs, caps, caplens, chidx) in progress:
-
             # Move to device, if available
             imgs = imgs.to(device)
             caps = caps.to(device)
@@ -219,8 +216,8 @@ def validate(val_loader, encoder, decoder, criterion, epoch, logger, writer, arg
 
             # Forward prop.
             if encoder is not None:
-                imgs = encoder(imgs)
-            scores, caps_sorted, decode_lengths, alphas, sort_ind = decoder(imgs, caps, caplens)
+                feature = encoder(imgs)
+            scores, caps_sorted, decode_lengths, alphas, sort_ind = decoder(feature, caps, caplens)
 
             # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
             targets = caps_sorted[:, 1:]
@@ -228,25 +225,25 @@ def validate(val_loader, encoder, decoder, criterion, epoch, logger, writer, arg
             logger(scores, chidx[sort_ind], targets, 'val: ')
             # Remove timesteps that we didn't decode at, or are pads
             # pack_padded_sequence is an easy trick to do this
-            scores = pack_padded_sequence(scores, decode_lengths, batch_first=True).data
-            targets = pack_padded_sequence(targets, decode_lengths, batch_first=True).data
+            scores_packed = pack_padded_sequence(scores, decode_lengths, batch_first=True).data
+            targets_packed = pack_padded_sequence(targets, decode_lengths, batch_first=True).data
 
             # Calculate loss
-            loss = criterion(scores, targets)
+            loss = criterion(scores_packed, targets_packed)
 
             # Add doubly stochastic attention regularization
             loss += args.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
 
             # Keep track of metrics
             losses.update(loss.item(), sum(decode_lengths))
-            top5.update(accuracy(scores, targets, 5), sum(decode_lengths))
-            top1.update(accuracy(scores, targets, 1), sum(decode_lengths))
+            top5.update(accuracy(scores_packed, targets_packed, 5), sum(decode_lengths))
+            top1.update(accuracy(scores_packed, targets_packed, 1), sum(decode_lengths))
             progress.set_description("valid loss: %.4f, top1: %2.2f%%, top5: %2.2f%%"%(losses.avg, top1.avg, top5.avg))
     writer.add_scalar('Loss/val', losses.avg, epoch)
     writer.add_scalar('Accuracy/val', top1.avg, epoch)
 
 
-    return top1.avg, imgs, scores, alphas
+    return top1.avg, imgs[sort_ind], scores, alphas
 
 if __name__ == '__main__':
     main()

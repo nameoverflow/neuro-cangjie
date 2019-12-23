@@ -91,7 +91,7 @@ class Attention(nn.Module):
         return attention_weighted_encoding, alpha
 
 class Decoder(nn.Module):
-    def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, ch_num, encoder_dim=2048, dropout=0.5):
+    def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=2048, dropout=0.5):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size

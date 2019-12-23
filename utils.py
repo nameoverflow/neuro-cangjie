@@ -1,10 +1,12 @@
 from PIL import ImageFont, ImageDraw, Image
 from fontTools.ttLib import TTFont
+import matplotlib; matplotlib.use('agg')
 
 import torch
 import os
 import numpy as np
 import matplotlib.cm as cm
+import matplotlib.pyplot as plt
 import skimage.transform
 
 from torchvision import transforms
@@ -88,11 +90,12 @@ def visualize_att(image, seq, alphas, rev_word_map, smooth=True):
     :param rev_word_map: reverse word mapping, i.e. ix2word
     :param smooth: smooth weights?
     """
-    image = image.resize([14 * 24, 14 * 24], Image.LANCZOS)
-    image = image.fromarray(255 - np.array(image), mode='L')
+    image = image.resize([13 * 12, 13 * 12], Image.LANCZOS)
+    image = Image.fromarray(255 - np.array(image), mode='L')
 
     words = [rev_word_map[ind] for ind in seq]
 
+    plt.clf()
     for t in range(len(words)):
         if t > 50:
             break
@@ -104,7 +107,7 @@ def visualize_att(image, seq, alphas, rev_word_map, smooth=True):
         if smooth:
             alpha = skimage.transform.pyramid_expand(current_alpha.numpy(), upscale=12, sigma=8)
         else:
-            alpha = skimage.transform.resize(current_alpha.numpy(), [16 * 12, 16 * 12])
+            alpha = skimage.transform.resize(current_alpha.numpy(), [13 * 12, 13 * 12])
         if t == 0:
             plt.imshow(alpha, alpha=0)
         else:
@@ -112,5 +115,5 @@ def visualize_att(image, seq, alphas, rev_word_map, smooth=True):
         plt.set_cmap(cm.Greys_r)
         plt.axis('off')
 
-    return plt
+    return plt.gcf()
  

@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-import matplotlib.cm as cm
 import skimage.transform
+import dataset
 
 from torch.nn.utils.rnn import pack_padded_sequence
 from torchvision import transforms
@@ -19,7 +19,6 @@ from tqdm import tqdm
 import utils
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 
 def beam_search(encoder, decoder, img, word_map, beam_size=3):
     """
@@ -52,7 +51,8 @@ def beam_search(encoder, decoder, img, word_map, beam_size=3):
     encoder_out = encoder_out.expand(k, num_pixels, encoder_dim)  # (k, num_pixels, encoder_dim)
 
     # Tensor to store top k previous words at each step; now they're just <start>
-    k_prev_words = torch.zeros(k, 1, dtype=torch.long, device=device)  # (k, 1)
+    # k_prev_words = torch.zeros(k, 1, dtype=torch.long, device=device)  # (k, 1)
+    k_prev_words = torch.tensor([[word_map['<start>']]] * k, device=device, dtype=torch.long)
 
     # Tensor to store top k sequences; now they're just <start>
     seqs = k_prev_words  # (k, 1)
@@ -71,9 +71,10 @@ def beam_search(encoder, decoder, img, word_map, beam_size=3):
     # Start decoding
     step = 1
     h, c = decoder.init_hidden_state(encoder_out)
+    h, c = decoder.layer_norm_h(h), decoder.layer_norm_c(c)
 
     # s is a number less than or equal to k, because sequences are removed from this process once they hit <end>
-    for step in range(10):
+    for step in range(7):
 
         embeddings = decoder.embedding(k_prev_words).squeeze(1)  # (s, embed_dim)
 
@@ -85,6 +86,7 @@ def beam_search(encoder, decoder, img, word_map, beam_size=3):
         awe = gate * awe
 
         h, c = decoder.rnn(torch.cat([embeddings, awe], dim=1), (h, c))  # (s, decoder_dim)
+        h, c = decoder.layer_norm_h(h), decoder.layer_norm_c(c)
 
         scores = decoder.fc(h)  # (s, vocab_size)
         scores = F.log_softmax(scores, dim=1)
@@ -98,7 +100,6 @@ def beam_search(encoder, decoder, img, word_map, beam_size=3):
         else:
             # Unroll and find top scores, and their unrolled indices
             top_k_scores, top_k_words = scores.view(-1).topk(k, 0, True, True)  # (s)
-
         # Convert unrolled indices to actual indices of scores
         prev_word_inds = top_k_words / vocab_size  # (s)
         next_word_inds = top_k_words % vocab_size  # (s)
@@ -139,8 +140,6 @@ def beam_search(encoder, decoder, img, word_map, beam_size=3):
     return seq, alphas, complete_seqs
 
 
-
-
 def main():
     global device
     parser = argparse.ArgumentParser(description='Neuro Cangjie')
@@ -160,7 +159,7 @@ def main():
     # Load model
     checkpoint = torch.load(args.model, map_location=device)
     encoder = models.Encoder(encode_channels=256).to(device)
-    decoder = models.Decoder(128, 256, 256, 26 + 2, dataset.char_num, encoder_dim=256, dropout=0.5).to(device)
+    decoder = models.Decoder(128, 256, 256, 26 + 2, encoder_dim=256, dropout=0.5).to(device)
     decoder.load_state_dict(checkpoint['decoder'])
     encoder.load_state_dict(checkpoint['encoder'])
     decoder.eval()
@@ -172,17 +171,16 @@ def main():
     while True:
         ch = input('>> ')[0]
         img = glyph.draw(ch)
-        img.save('exp.png')
+        # img.save('exp.png')
 
         # Encode, decode with attention and beam search
         seq, alphas, all_seq = beam_search(encoder, decoder, img, word_map, args.beam_size)
-        for s in all_seq:
-            codes = [rev_word_map[ind] for ind in s]
-            print(codes)
+        # seq, alphas, all_seq = first_out(encoder, decoder, img, word_map)
+        print(''.join([rev_word_map[ind] for ind in seq[1:-1]]))
         alphas = torch.FloatTensor(alphas)
-
         # Visualize caption and attention of best sequence
         plt = utils.visualize_att(img, seq, alphas, rev_word_map, args.smooth)
         plt.savefig('result.png')
+
 if __name__ == '__main__':
     main()
