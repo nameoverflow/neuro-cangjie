@@ -69,9 +69,15 @@ def main():
                                              num_workers=args.loader_workers,
                                              pin_memory=True)
 
+    train_augment = T.Compose([
+        T.RandomResizedCrop(64, (0.5, 1/0.9), (4./ 3., 3./6.)),
+        T.RandomRotation((-10, 10)),
+        T.ToTensor()
+    ])
+
     encoder = models.Encoder(encode_channels=256).to(device)
     encoder_optim = torch.optim.Adam(encoder.parameters(), lr=args.encoder_lr)
-    decoder = models.Decoder(128, 256, 256, 26 + 2, encoder_dim=256, dropout=0.5).to(device)
+    decoder = models.Decoder(128, 256, 256, 26 + 2, encoder_dim=256, dropout=0.7).to(device)
     decoder_optim = torch.optim.Adam(decoder.parameters(), lr=args.decoder_lr)
     epoch_start = 0
     if args.resume != None:
@@ -90,16 +96,17 @@ def main():
     best_acc = 0
 
     for epoch in tqdm(range(epoch_start, args.epochs), position=0):
-        train(train_loader=train_loader,
-              encoder=encoder,
-              decoder=decoder,
-              criterion=criterion,
-              encoder_optimizer=encoder_optim,
-              decoder_optimizer=decoder_optim,
-              epoch=epoch,
-              logger=logger,
-              writer=writer,
-              args=args)
+        with dataset.transform(train_augment):
+            train(train_loader=train_loader,
+                encoder=encoder,
+                decoder=decoder,
+                criterion=criterion,
+                encoder_optimizer=encoder_optim,
+                decoder_optimizer=decoder_optim,
+                epoch=epoch,
+                logger=logger,
+                writer=writer,
+                args=args)
         acc, imgs, scores, alphas = validate(val_loader=val_loader,
                        encoder=encoder,
                        decoder=decoder,

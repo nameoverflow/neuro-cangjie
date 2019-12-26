@@ -61,16 +61,28 @@ class Glyph(object):
         return img
 
 
+
+
 class CodeTableDataset(object):
+    class _GlyphTransform(object):
+        def __init__(self, dset, t):
+            self.dset = dset
+            self.t = t
+
+        def __enter__(self):
+            self.dset.img_transform = self.t
+        
+        def __exit__(self, type, value, traceback):
+            self.t = T.ToTensor()
+
     def __init__(self, glyph: Glyph, table: str, codemap: str):
+        dset = self
+
         self.codemap, self.codemap_rev = utils.load_map(codemap)
         self.code_num = len(self.codemap)
-        self.img_transform = T.Compose([
-            T.RandomResizedCrop(64, (0.9, 1 / 0.9), (9. / 10., 10./9.)),
-            # T.RandomRotation((-15, 15)),
-            T.ToTensor()
-        ])
         self.glyph = glyph
+        self.img_transform = T.ToTensor()
+
         with open(table) as f:
             entries = [datum.strip().split('\t') for datum in f.readlines()]
             self.entries = [(datum[0], datum[1]) for datum in entries if len(datum) > 1]
@@ -100,6 +112,9 @@ class CodeTableDataset(object):
     @property
     def char_num(self):
         return len(self.chs)
+    
+    def transform(self, t):
+        return self._GlyphTransform(self, t)
 
 
 def collate_batch(batch):
