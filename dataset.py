@@ -73,7 +73,7 @@ class CodeTableDataset(object):
             self.dset.img_transform = self.t
         
         def __exit__(self, type, value, traceback):
-            self.t = T.ToTensor()
+            self.dset.img_transform = T.ToTensor()
 
     def __init__(self, glyph: Glyph, table: str, codemap: str):
         dset = self

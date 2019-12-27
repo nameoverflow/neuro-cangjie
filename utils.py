@@ -73,11 +73,11 @@ def save_checkpoint(epoch, encoder, decoder, encoder_optimizer, decoder_optimize
              'decoder': decoder.state_dict(),
              'encoder_optimizer': encoder_optimizer.state_dict(),
              'decoder_optimizer': decoder_optimizer.state_dict()}
-    filename = os.path.join(save_dir, 'checkpoint_' + str(epoch) + '.pth.tar')
+    filename = os.path.join(save_dir, 'checkpoint.pth.tar')
     torch.save(state, filename)
     # If this checkpoint is the best so far, store a copy so it doesn't get overwritten by a worse checkpoint
     if is_best:
-        torch.save(state, filename + '.best')
+        torch.save(state, filename + '.best.%d'%epoch)
 
 
 def visualize_att(image, seq, alphas, rev_word_map, smooth=True):

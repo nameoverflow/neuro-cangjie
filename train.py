@@ -70,7 +70,7 @@ def main():
                                              pin_memory=True)
 
     train_augment = T.Compose([
-        T.RandomResizedCrop(64, (0.5, 1/0.9), (4./ 3., 3./6.)),
+        T.RandomResizedCrop(64, (0.5, 1/0.9), (3./6., 4./ 3.)),
         T.RandomRotation((-10, 10)),
         T.ToTensor()
     ])
