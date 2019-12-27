@@ -2,6 +2,7 @@
 data/hanazono/*
 data/img/*
 logs/*
+.ipynb_checkpoints
 result.png
 !.keep
 __pycache__
