@@ -1,4 +1,4 @@
-from PIL import ImageFont, ImageDraw, Image
+from PIL import ImageFont, ImageDraw, Image, ImageOps
 from fontTools.ttLib import TTFont
 import matplotlib; matplotlib.use('agg')
 
@@ -91,7 +91,7 @@ def visualize_att(image, seq, alphas, rev_word_map, smooth=True):
     :param smooth: smooth weights?
     """
     image = image.resize([13 * 12, 13 * 12], Image.LANCZOS)
-    image = Image.fromarray(255 - np.array(image), mode='L')
+    image = ImageOps.invert(image)
 
     words = [rev_word_map[ind] for ind in seq]
 

@@ -169,11 +169,10 @@ def main():
     glyph = dset.Glyph(args.fonts)
     while True:
         ch = input('>> ')[0]
-        # img = glyph.draw(ch)
-        # img.save('exp.png')
-        img = Image.open('test.jpg').convert('L')
-        img = img.resize((64, 64))
-        img = ImageOps.invert(img)
+        img = glyph.draw(ch)
+        # img = Image.open('test.jpg').convert('L')
+        # img = img.resize((64, 64))
+        # img = ImageOps.invert(img)
 
         # Encode, decode with attention and beam search
         seq, alphas, all_seq = beam_search(encoder, decoder, img, word_map, args.beam_size)
