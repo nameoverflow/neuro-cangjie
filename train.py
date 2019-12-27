@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import torchvision.transforms as T
+import random
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.utils.tensorboard import SummaryWriter
 from PIL import Image
@@ -52,9 +53,15 @@ def main():
     parser.add_argument('--decoder_lr', type=float, default=1e-3)
     parser.add_argument('--alpha_c', type=float, default=1.)
     parser.add_argument('--grad_clip', type=float, default=5.)
+    parser.add_argument('--seed', type=int, default=114514, help="random seed for training")
+
     args = parser.parse_args()
     args.save_dir = os.path.join(args.save_dir, datetime.datetime.now().strftime("%m-%d-%Y-%H:%M:%S"))
     os.makedirs(args.save_dir)
+
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    random.seed(args.seed)
 
     glyph = dset.Glyph(args.fonts)
     dataset = dset.CodeTableDataset(glyph, table=args.table, codemap=args.codemap)
@@ -119,7 +126,7 @@ def main():
         is_best = best_acc < acc # and epoch > 0
         best_acc = max(acc, best_acc)
         
-        if epoch % args.save_interval == args.save_interval - 1 or is_best:
+        if epoch % args.save_interval == args.save_interval - 1:
             save_checkpoint(epoch, encoder, decoder, encoder_optim, decoder_optim, acc, is_best, args.save_dir)
             vis = visualize_att(T.ToPILImage()(imgs[0].cpu()), scores[0].topk(1, dim=-1).indices.flatten().tolist(), alphas[0].view(-1, 13, 13).cpu(), logger.map_rev)
             vis.savefig(os.path.join(args.save_dir, 'val_visualize_%d.png'%epoch))
