@@ -11,6 +11,9 @@ from PIL import Image, ImageOps
 import argparse
 
 import models
+import models.resnet
+import models.rnn
+
 import dataset as dset
 
 from tqdm import tqdm
@@ -38,7 +41,7 @@ def beam_search(encoder, decoder, img, word_map, beam_size=3):
 
     # Encode
     image = image.unsqueeze(0)  # (1, 1, 64, 64)
-    encoder_out = encoder(image)  # (1, enc_image_size, enc_image_size, encoder_dim)
+    encoder_out = encoder(image)[-1].permute(0, 2, 3, 1)  # (1, enc_image_size, enc_image_size, encoder_dim)
     enc_image_size = encoder_out.size(1)
     encoder_dim = encoder_out.size(3)
 
@@ -74,13 +77,9 @@ def beam_search(encoder, decoder, img, word_map, beam_size=3):
 
     # s is a number less than or equal to k, because sequences are removed from this process once they hit <end>
     for step in range(7):
-
         embeddings = decoder.embedding(k_prev_words).squeeze(1)  # (s, embed_dim)
-
         awe, alpha = decoder.attention(encoder_out, h)  # (s, encoder_dim), (s, num_pixels)
-
         alpha = alpha.view(-1, enc_image_size, enc_image_size)  # (s, enc_image_size, enc_image_size)
-
         gate = decoder.sigmoid(decoder.f_beta(h))  # gating scalar, (s, encoder_dim)
         awe = gate * awe
 
@@ -94,13 +93,13 @@ def beam_search(encoder, decoder, img, word_map, beam_size=3):
         scores = top_k_scores.expand_as(scores) + scores  # (s, vocab_size)
 
         # For the first step, all k points will have the same scores (since same k previous words, h, c)
-        if step == 1:
+        if step == 0:
             top_k_scores, top_k_words = scores[0].topk(k, 0, True, True)  # (s)
         else:
             # Unroll and find top scores, and their unrolled indices
             top_k_scores, top_k_words = scores.view(-1).topk(k, 0, True, True)  # (s)
         # Convert unrolled indices to actual indices of scores
-        prev_word_inds = top_k_words / vocab_size  # (s)
+        prev_word_inds = top_k_words // vocab_size  # (s)
         next_word_inds = top_k_words % vocab_size  # (s)
 
         # Add new words to sequences, alphas
@@ -157,8 +156,11 @@ def main():
 
     # Load model
     checkpoint = torch.load(args.model, map_location=device)
-    encoder = models.Encoder(encode_channels=256).to(device)
-    decoder = models.Decoder(128, 256, 256, 26 + 2, encoder_dim=256, dropout=0.5).to(device)
+    encoder = models.resnet.ResNet14().to(device)
+    # encoder = models.Encoder(encode_channels=256).to(device)
+    # decoder = models.Decoder(128, 256, 256, 26 + 2, encoder_dim=256, dropout=0.5).to(device)
+    decoder = models.rnn.Decoder(128, 256, 256, 26 + 2, encoder_dim=256, dropout=0.2).to(device)
+
     decoder.load_state_dict(checkpoint['decoder'])
     encoder.load_state_dict(checkpoint['encoder'])
     decoder.eval()
@@ -178,6 +180,8 @@ def main():
         seq, alphas, all_seq = beam_search(encoder, decoder, img, word_map, args.beam_size)
         # seq, alphas, all_seq = first_out(encoder, decoder, img, word_map)
         print(''.join([rev_word_map[ind] for ind in seq[1:-1]]))
+        # for s in all_seq:
+            # print(''.join([rev_word_map[ind] for ind in s[1:-1]]))
         alphas = torch.FloatTensor(alphas)
         # Visualize caption and attention of best sequence
         plt = utils.visualize_att(img, seq, alphas, rev_word_map, args.smooth)

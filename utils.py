@@ -54,7 +54,7 @@ def accuracy(scores, targets, k):
     return correct_total.item() * (100.0 / batch_size)
 
 
-def save_checkpoint(epoch, encoder, decoder, encoder_optimizer, decoder_optimizer, acc, is_best, save_dir):
+def save_checkpoint(state, epoch, is_best, save_dir):
     """
     Saves model checkpoint.
     :param data_name: base name of processed dataset
@@ -67,12 +67,6 @@ def save_checkpoint(epoch, encoder, decoder, encoder_optimizer, decoder_optimize
     :param acc: validation acc
     :param is_best: is this checkpoint the best so far?
     """
-    state = {'epoch': epoch,
-             'acc': acc,
-             'encoder': encoder.state_dict(),
-             'decoder': decoder.state_dict(),
-             'encoder_optimizer': encoder_optimizer.state_dict(),
-             'decoder_optimizer': decoder_optimizer.state_dict()}
     filename = os.path.join(save_dir, 'checkpoint.pth.tar')
     torch.save(state, filename)
     # If this checkpoint is the best so far, store a copy so it doesn't get overwritten by a worse checkpoint
@@ -90,7 +84,8 @@ def visualize_att(image, seq, alphas, rev_word_map, smooth=True):
     :param rev_word_map: reverse word mapping, i.e. ix2word
     :param smooth: smooth weights?
     """
-    image = image.resize([13 * 12, 13 * 12], Image.LANCZOS)
+    alpha_size = alphas.size(-1)
+    image = image.resize([alpha_size * 12, alpha_size * 12], Image.LANCZOS)
     image = ImageOps.invert(image)
 
     words = [rev_word_map[ind] for ind in seq]
@@ -107,7 +102,7 @@ def visualize_att(image, seq, alphas, rev_word_map, smooth=True):
         if smooth:
             alpha = skimage.transform.pyramid_expand(current_alpha.numpy(), upscale=12, sigma=8)
         else:
-            alpha = skimage.transform.resize(current_alpha.numpy(), [13 * 12, 13 * 12])
+            alpha = skimage.transform.resize(current_alpha.numpy(), [alpha_size * 12, alpha_size * 12])
         if t == 0:
             plt.imshow(alpha, alpha=0)
         else:

@@ -31,16 +31,13 @@ class Encoder(nn.Module):
         # modules = list(net.children())[:-2]
         # self.net = nn.Sequential(*modules)
         self.net = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=encode_channels, kernel_size=5, stride=2),
+            nn.Conv2d(in_channels=1, out_channels=encode_channels // 8, kernel_size=3, stride=2),
             nn.BatchNorm2d(encode_channels),
             nn.ReLU(),
-            nn.Conv2d(in_channels=encode_channels, out_channels=encode_channels // 4, kernel_size=1, groups=4),
-            ShuffleChannel(4),
+            nn.Conv2d(in_channels=encode_channels // 8, out_channels=encode_channels // 4, kernel_size=3),
             nn.BatchNorm2d(encode_channels // 4),
             nn.ReLU(),
-            nn.Conv2d(in_channels=encode_channels // 4, out_channels=encode_channels, kernel_size=5, stride=2, groups=8),
-            ShuffleChannel(8),
-            nn.Dropout(0.5)
+            nn.Conv2d(in_channels=encode_channels // 4, out_channels=encode_channels, kernel_size=3, stride=2),
         )
 
         # self.adaptive_pool = nn.AdaptiveAvgPool2d((encoded_image_size, encoded_image_size))
@@ -121,6 +118,13 @@ class Decoder(nn.Module):
         self.sigmoid = nn.Sigmoid()
         self.fc = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
         # self.init_weights()  # initialize some layers with the uniform distribution
+
+        self.aux_codelen = nn.Sequential(
+            nn.Linear(encoder_dim, encoder_dim // 2, False),
+            nn.BatchNorm1d(encoder_dim // 2),
+            nn.ReLU(),
+            nn.Linear(encoder_dim // 2, 5, False)
+        )
     
     def init_hidden_state(self, encoder_out):
         """
@@ -143,10 +147,12 @@ class Decoder(nn.Module):
         """
 
         batch_size = encoder_out.size(0)
-        encoder_dim = encoder_out.size(-1)
+        encoder_dim = encoder_out.size(1)
 
+        aux_codelen = self.aux_codelen(F.adaptive_avg_pool2d(encoder_out, 1).view(-1, encoder_dim))
         # Flatten image
-        encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
+        
+        encoder_out = encoder_out.permute(0, 2, 3, 1).view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
         num_pixels = encoder_out.size(1)
 
         # Sort input data by decreasing lengths; why? apparent below
@@ -195,6 +201,6 @@ class Decoder(nn.Module):
             predictions[:batch_size_t, t, :] = preds
             alphas[:batch_size_t, t, :] = alpha
 
-        return predictions, encoded_captions, decode_lengths, alphas, sort_ind
+        return predictions, encoded_captions, decode_lengths, alphas, sort_ind, aux_codelen
 
 

@@ -121,3 +121,10 @@ def collate_batch(batch):
     batch = [d for d in batch if d is not None]
     img, code, codelen, chidx = zip(*batch)
     return torch.stack(img, dim=0), pad_sequence(code, batch_first=True), torch.stack(codelen, dim=0), torch.stack(chidx, dim=0)
+
+def collate_batch_pad(pad_idx):
+    def collate(batch):
+        batch = [d for d in batch if d is not None]
+        img, code, codelen, chidx = zip(*batch) 
+        return torch.stack(img, dim=0), pad_sequence(code, batch_first=False, padding_value=pad_idx), torch.stack(codelen, dim=0), torch.stack(chidx, dim=0)
+    return collate

@@ -11,8 +11,7 @@ from PIL import Image
 import argparse
 import datetime
 
-import models.resnet
-import models.rnn
+from models.transformer import CangjieTransformer
 import dataset as dset
 
 from tqdm import tqdm
@@ -30,10 +29,10 @@ class PredLogger(object):
 
     def __call__(self, pred, chidx, gt, prefix):
         with torch.no_grad():
-            p, c = pred[0], chidx[0]
+            p, c = pred[:, 0], chidx[0]
             code = p.topk(1, dim=-1).indices.flatten().tolist()
             code = [self.map_rev[c] for c in code]
-            gt = [self.map_rev[c] for c in gt[0].tolist()]
+            gt = [self.map_rev[c] for c in gt[:, 0].tolist()]
             c = self.dataset.chs[c.item()]
             self.log.writelines([prefix + '%s: %s, gt: %s\n'%(c, code, gt)])
 
@@ -50,15 +49,13 @@ def main():
     parser.add_argument('--table', type=str, default='data/Cangjie5.txt')
     parser.add_argument('--codemap', type=str, default='data/codemap_cangjie5.txt')
     parser.add_argument('--fonts', nargs='+', default=['data/hanazono/HanaMinA.ttf', 'data/hanazono/HanaMinB.ttf'])
-    parser.add_argument('--encoder_lr', type=float, default=1e-3)
-    parser.add_argument('--decoder_lr', type=float, default=1e-3)
-    parser.add_argument('--alpha_c', type=float, default=1.)
-    parser.add_argument('--alpha_codelen', type=float, default=1.)
-    parser.add_argument('--grad_clip', type=float, default=5.)
+    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--grad_clip', type=float, default=0.1)
     parser.add_argument('--seed', type=int, default=114514, help="random seed for training")
+    parser.add_argument('--alpha_codelen', type=float, default=1.)
 
     args = parser.parse_args()
-    args.save_dir = os.path.join(args.save_dir, datetime.datetime.now().strftime("%m-%d-%Y-%H:%M:%S"))
+    args.save_dir = os.path.join(args.save_dir, datetime.datetime.now().strftime("transformer-%m-%d-%Y-%H:%M:%S"))
     os.makedirs(args.save_dir)
 
     torch.manual_seed(args.seed)
@@ -67,14 +64,15 @@ def main():
 
     glyph = dset.Glyph(args.fonts)
     dataset = dset.CodeTableDataset(glyph, table=args.table, codemap=args.codemap)
+    # args.pad = dataset.codemap['<pad>']
     train_length = int(len(dataset) * 0.7)
     train_set, val_set = torch.utils.data.random_split(dataset, [train_length, len(dataset) - train_length])
     train_loader = torch.utils.data.DataLoader(train_set, args.batch_size, True,
-                                               collate_fn=dset.collate_batch,
+                                               collate_fn=dset.collate_batch_pad(dataset.codemap['<pad>']),
                                                num_workers=args.loader_workers,
                                                pin_memory=True)
     val_loader = torch.utils.data.DataLoader(val_set, args.batch_size, False,
-                                             collate_fn=dset.collate_batch,
+                                             collate_fn=dset.collate_batch_pad(dataset.codemap['<pad>']),
                                              num_workers=args.loader_workers,
                                              pin_memory=True)
 
@@ -84,25 +82,24 @@ def main():
         T.ToTensor()
     ])
 
-    # encoder = models.Encoder(encode_channels=256).to(device)
-    encoder = models.resnet.ResNet14().to(device)
-    encoder_optim = torch.optim.Adam(encoder.parameters(), lr=args.encoder_lr)
-    decoder = models.rnn.Decoder(128, 256, 256, 26 + 2, encoder_dim=256, dropout=0.2).to(device)
-    decoder_optim = torch.optim.Adam(decoder.parameters(), lr=args.decoder_lr)
+    # encoder = Encoder(encode_channels=256).to(device)
+    # encoder_optim = torch.optim.Adam(encoder.parameters(), lr=args.encoder_lr)
+    # decoder = Decoder(dataset.codemap, 256, 4, 256, 4, dropout=0.5).to(device)
+    # decoder_optim = torch.optim.Adam(decoder.parameters(), lr=args.decoder_lr)
+    model = CangjieTransformer(dataset.codemap, 256, 4, 256, 4, dropout=0.2).to(device)
+    optim = torch.optim.Adam(model.parameters(), lr=args.lr)
+    # optim = torch.optim.SGD(model.parameters(), args.lr, momentum=0.8)
     epoch_start = 0
     if args.resume != None:
         print('loading checkpoint: %s'%args.resume)
         checkpoint = torch.load(args.resume, map_location=device)
-        decoder.load_state_dict(checkpoint['decoder'])
-        decoder_optim.load_state_dict(checkpoint['decoder_optimizer'])
-        encoder.load_state_dict(checkpoint['encoder'])
-        encoder_optim.load_state_dict(checkpoint['encoder_optimizer'])
+        model.load_state_dict(checkpoint['model'])
+        optim.load_state_dict(checkpoint['optimizer'])
         epoch_start = checkpoint['epoch']
 
-    enc_sche = torch.optim.lr_scheduler.CosineAnnealingLR(encoder_optim, args.epochs, last_epoch=epoch_start-1)
-    dec_sche = torch.optim.lr_scheduler.CosineAnnealingLR(decoder_optim, args.epochs, last_epoch=epoch_start-1)
+    sche = torch.optim.lr_scheduler.CosineAnnealingLR(optim, args.epochs, last_epoch=epoch_start-1)
 
-    criterion = nn.CrossEntropyLoss().to(device)
+    criterion = nn.CrossEntropyLoss(ignore_index=dataset.codemap['<pad>']).to(device)
     logger = PredLogger(dataset, args.save_dir, args.codemap)
     writer = SummaryWriter(args.save_dir)
 
@@ -111,46 +108,38 @@ def main():
     for epoch in tqdm(range(epoch_start, args.epochs), position=0):
         with dataset.transform(train_augment):
             train(train_loader=train_loader,
-                encoder=encoder,
-                decoder=decoder,
+                model=model,
                 criterion=criterion,
-                encoder_optimizer=encoder_optim,
-                decoder_optimizer=decoder_optim,
+                optimizer=optim,
                 epoch=epoch,
                 logger=logger,
                 writer=writer,
                 args=args)
-        acc, imgs, scores, alphas = validate(val_loader=val_loader,
-                       encoder=encoder,
-                       decoder=decoder,
+        acc, imgs, scores = validate(val_loader=val_loader,
+                       model=model,
                        criterion=criterion,
                        epoch=epoch,
                        logger=logger,
                        writer=writer,
                        args=args)
-        
+        sche.step()
         is_best = best_acc < acc # and epoch > 0
         best_acc = max(acc, best_acc)
         
-        enc_sche.step()
-        dec_sche.step()
-
         if epoch % args.save_interval == 0:
             data = {'epoch': epoch,
                     'acc': acc,
-                    'encoder': encoder.state_dict(),
-                    'decoder': decoder.state_dict(),
-                    'encoder_optimizer': encoder_optim.state_dict(),
-                    'decoder_optimizer': decoder_optim.state_dict()}
+                    'model': model.state_dict(),
+                    'optimizer': optim.state_dict()}
             save_checkpoint(data, epoch, is_best, args.save_dir)
-            vis = visualize_att(T.ToPILImage()(imgs[0].cpu()), scores[0].topk(1, dim=-1).indices.flatten().tolist(), alphas[0].view(-1, 16, 16).cpu(), logger.map_rev)
-            vis.savefig(os.path.join(args.save_dir, 'val_visualize_%d.png'%epoch))
+
+            # vis = visualize_att(T.ToPILImage()(imgs[0].cpu()), scores[0].topk(1, dim=-1).indices.flatten().tolist(), alphas[0].view(-1, 13, 13).cpu(), logger.map_rev)
+            # vis.savefig(os.path.join(args.save_dir, 'val_visualize_%d.png'%epoch))
 
 
-def train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_optimizer, epoch, logger, writer, args):
+def train(train_loader, model, criterion, optimizer, epoch, logger, writer, args):
 
-    decoder.train()  # train mode (dropout and batchnorm is used)
-    encoder.train()
+    model.train()
 
     losses = AverageMeter()  # loss (per word decoded)
     aux_top1 = AverageMeter()
@@ -161,72 +150,71 @@ def train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_
     progress = tqdm(enumerate(train_loader), total=len(train_loader), leave=False)
     for i, (imgs, caps, caplens, chidx) in progress:
         # Move to GPU, if available
+        tgt = caps[:-1].to(device)
+        tgt_y = caps[1:].to(device).permute(1, 0)
+
         imgs = imgs.to(device)
-        caps = caps.to(device)
+        # caps = caps.to(device)
         caplens = caplens.to(device)
         chidx = chidx.to(device)
 
         # Forward prop.
-        feature = encoder(imgs)[-1]
-        scores, caps_sorted, decode_lengths, alphas, sort_ind, aux_codelen = decoder(feature, caps, caplens)
+        # scores, caps_sorted, decode_lengths, alphas, sort_ind = decoder(feature, caps, caplens)
+        scores, aux_codelen = model(imgs, tgt)
+        # print(scores.size())
 
         # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
-        targets = caps_sorted[:, 1:]
+        # targets = caps_sorted[:, 1:]
         # print(scores.topk(1, dim=-1).indices.view(len(scores), -1))
 
-        logger(scores, chidx[sort_ind], targets, 'train: ')
+        logger(scores, chidx, caps, 'train: ')
         # Remove timesteps that we didn't decode at, or are pads
         # pack_padded_sequence is an easy trick to do this
-        scores = pack_padded_sequence(scores, decode_lengths, batch_first=True).data
-        targets = pack_padded_sequence(targets, decode_lengths, batch_first=True).data
 
         # Calculate loss
-        loss = criterion(scores, targets)
+        # loss = criterion(scores.permute(1, 0, 2).view(-1, scores.size(-1)), tgt_y.view(-1, tgt_y.size(-1)))
+        scores = scores.permute(1, 0, 2).reshape(-1, scores.size(-1))
+        tgt_y = tgt_y.reshape(-1)
+        # print(scores.size(), tgt_y.size())
+        loss = criterion(scores, tgt_y)
         # loss_aux = criterion(aux_out, chidx)
+        loss += args.alpha_codelen * F.cross_entropy(aux_codelen, caplens - 3)
 
         # Add doubly stochastic attention regularization
-        loss += args.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
-        loss += args.alpha_codelen * F.cross_entropy(aux_codelen, caplens[sort_ind] - 3)
+        # loss += args.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
+
         # Back prop.
-        decoder_optimizer.zero_grad()
-        if encoder_optimizer is not None:
-            encoder_optimizer.zero_grad()
+        optimizer.zero_grad()
         # (loss + 10 * loss_aux).backward()
         loss.backward()
 
         # Clip gradients
         if args.grad_clip is not None:
-            torch.nn.utils.clip_grad_norm_(decoder.parameters(), args.grad_clip)
-            if encoder_optimizer is not None:
-                torch.nn.utils.clip_grad_norm_(encoder.parameters(), args.grad_clip)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+
 
         # Update weights
-        decoder_optimizer.step()
-        if encoder_optimizer is not None:
-            encoder_optimizer.step()
+        optimizer.step()
 
         # Keep track of metrics
-        losses.update(loss.item(), sum(decode_lengths))
-        top5.update(accuracy(scores, targets, 5), sum(decode_lengths))
-        top1.update(accuracy(scores, targets, 1), sum(decode_lengths))
+        losses.update(loss.item(), sum(caplens - 1))
+        top5.update(accuracy(scores, tgt_y, 5), sum(caplens - 1))
+        top1.update(accuracy(scores, tgt_y, 1), sum(caplens - 1))
         progress.set_description("train loss: %.4f, top1: %2.2f%%, top5: %2.2f%%"%(losses.avg, top1.avg, top5.avg))
 
     writer.add_scalar('Loss/train', losses.avg, epoch)
     writer.add_scalar('Accuracy/train', top1.avg, epoch)
 
 
-def validate(val_loader, encoder, decoder, criterion, epoch, logger, writer, args):
+def validate(val_loader, model, criterion, epoch, logger, writer, args):
     """
     Performs one epoch's validation.
     :param val_loader: DataLoader for validation data.
-    :param encoder: encoder model
-    :param decoder: decoder model
+    :param model: model
     :param criterion: loss layer
     :return: BLEU-4 score
     """
-    decoder.eval()  # eval mode (no dropout or batchnorm)
-    if encoder is not None:
-        encoder.eval()
+    model.eval()  # eval mode (no dropout or batchnorm)
 
     batch_time = AverageMeter()
     losses = AverageMeter()
@@ -238,41 +226,47 @@ def validate(val_loader, encoder, decoder, criterion, epoch, logger, writer, arg
         progress = tqdm(enumerate(val_loader), total=len(val_loader), leave=False)
         for i, (imgs, caps, caplens, chidx) in progress:
             # Move to device, if available
+            tgt = caps[:-1].to(device)
+            tgt_y = caps[1:].to(device).permute(1, 0)
+
             imgs = imgs.to(device)
             caps = caps.to(device)
             caplens = caplens.to(device)
             chidx = chidx.to(device)
 
             # Forward prop.
-            if encoder is not None:
-                feature = encoder(imgs)[-1]
-            scores, caps_sorted, decode_lengths, alphas, sort_ind, aux_codelen = decoder(feature, caps, caplens)
+            # scores, caps_sorted, decode_lengths, alphas, sort_ind = decoder(feature, caps, caplens)
+            scores, aux_codelen = model(imgs, tgt)
 
             # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
-            targets = caps_sorted[:, 1:]
+            # targets = caps_sorted[:, 1:]
 
-            logger(scores, chidx[sort_ind], targets, 'val: ')
+            logger(scores, chidx, caps, 'val: ')
             # Remove timesteps that we didn't decode at, or are pads
             # pack_padded_sequence is an easy trick to do this
-            scores_packed = pack_padded_sequence(scores, decode_lengths, batch_first=True).data
-            targets_packed = pack_padded_sequence(targets, decode_lengths, batch_first=True).data
 
             # Calculate loss
-            loss = criterion(scores_packed, targets_packed)
+            # loss = criterion(scores, tgt_y)
+            # loss = criterion(scores.permute(1, 0, 2), tgt_y)
+            # loss = criterion(scores.permute(1, 0, 2).reshape(-1, scores.size(-1)), tgt_y.reshape(-1, tgt_y.size(-1)))
+            scores = scores.permute(1, 0, 2).reshape(-1, scores.size(-1))
+            tgt_y = tgt_y.reshape(-1)
+            loss = criterion(scores, tgt_y)
+
 
             # Add doubly stochastic attention regularization
-            loss += args.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
+            # loss += args.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
 
             # Keep track of metrics
-            losses.update(loss.item(), sum(decode_lengths))
-            top5.update(accuracy(scores_packed, targets_packed, 5), sum(decode_lengths))
-            top1.update(accuracy(scores_packed, targets_packed, 1), sum(decode_lengths))
+            losses.update(loss.item(), sum(caplens - 1))
+            top5.update(accuracy(scores, tgt_y, 5), sum(caplens - 1))
+            top1.update(accuracy(scores, tgt_y, 1), sum(caplens - 1))
             progress.set_description("valid loss: %.4f, top1: %2.2f%%, top5: %2.2f%%"%(losses.avg, top1.avg, top5.avg))
     writer.add_scalar('Loss/val', losses.avg, epoch)
     writer.add_scalar('Accuracy/val', top1.avg, epoch)
 
 
-    return top1.avg, imgs[sort_ind], scores, alphas
+    return top1.avg, imgs, scores
 
 if __name__ == '__main__':
     main()
