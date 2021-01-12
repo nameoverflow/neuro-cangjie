@@ -185,7 +185,7 @@ def main():
         alphas = torch.FloatTensor(alphas)
         # Visualize caption and attention of best sequence
         plt = utils.visualize_att(img, seq, alphas, rev_word_map, args.smooth)
-        plt.savefig('result.png')
+        plt.savefig('result.png', bbox_inches='tight')
 
 if __name__ == '__main__':
     main()

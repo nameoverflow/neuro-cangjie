@@ -85,24 +85,25 @@ def visualize_att(image, seq, alphas, rev_word_map, smooth=True):
     :param smooth: smooth weights?
     """
     alpha_size = alphas.size(-1)
-    image = image.resize([alpha_size * 12, alpha_size * 12], Image.LANCZOS)
+    image = image.resize([alpha_size * 6, alpha_size * 6], Image.LANCZOS)
     image = ImageOps.invert(image)
 
     words = [rev_word_map[ind] for ind in seq]
 
     plt.clf()
+    # plt.figure(figsize=(6, 3))
     for t in range(len(words)):
         if t > 50:
             break
-        plt.subplot(np.ceil(len(words) / 5.), 5, t + 1)
+        plt.subplot(1, 7, t + 1)
 
-        plt.text(0, 1, '%s' % (words[t]), color='black', backgroundcolor='white', fontsize=12)
+        plt.text(0, 1, '%s' % (words[t]), color='black', backgroundcolor='white', fontsize=9)
         plt.imshow(image)
         current_alpha = alphas[t, :]
         if smooth:
-            alpha = skimage.transform.pyramid_expand(current_alpha.numpy(), upscale=12, sigma=8)
+            alpha = skimage.transform.pyramid_expand(current_alpha.numpy(), upscale=6, sigma=8)
         else:
-            alpha = skimage.transform.resize(current_alpha.numpy(), [alpha_size * 12, alpha_size * 12])
+            alpha = skimage.transform.resize(current_alpha.numpy(), [alpha_size * 6, alpha_size * 6])
         if t == 0:
             plt.imshow(alpha, alpha=0)
         else:
