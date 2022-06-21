@@ -9,7 +9,7 @@ mkl-fft==1.0.15
 mkl-random==1.1.0
 mkl-service==2.3.0
 networkx==2.4
-numpy==1.17.4
+numpy==1.22.0
 olefile==0.46
 Pillow==6.2.1
 pycparser==2.19
