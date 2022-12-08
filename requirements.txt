@@ -1,4 +1,4 @@
-certifi==2019.11.28
+certifi==2022.12.7
 cffi==1.13.2
 cycler==0.10.0
 decorator==4.4.1
